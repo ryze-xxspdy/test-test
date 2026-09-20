@@ -219,6 +219,26 @@ h2{font-family:var(--head);font-weight:800;font-size:clamp(22px,4vw,30px);letter
 .chip:hover{border-color:var(--line-2);color:var(--text)}
 .chip.on{background:var(--pink);border-color:var(--pink);color:#2B1520;font-weight:600}
 
+/* ── look tiles: every filter fits, in a box, with a profile picture ── */
+.chips.looks{display:grid;grid-template-columns:repeat(auto-fill,minmax(76px,1fr));gap:8px}
+.chip.look{
+  display:flex;flex-direction:column;align-items:center;gap:6px;min-width:0;
+  padding:6px 6px 8px;border-radius:14px;
+  background:color-mix(in srgb, var(--text) 3%, transparent);
+}
+.chip.look .pic{display:block;width:100%;aspect-ratio:1;border-radius:9px;overflow:hidden;background:#0C090B}
+.chip.look .pic img{display:block;width:100%;height:100%;object-fit:cover;pointer-events:none}
+.chip.look .nm{max-width:100%;font-size:11.5px;line-height:1.1;overflow:hidden;text-overflow:ellipsis}
+.chip.look.on{
+  background:color-mix(in srgb, var(--pink) 16%, transparent);
+  border-color:var(--pink);box-shadow:0 0 0 1px var(--pink);color:var(--text);font-weight:600;
+}
+@media(max-width:480px){
+  .chips.looks{grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
+  .chip.look{padding:5px 4px 6px;border-radius:12px}
+  .chip.look .nm{font-size:10.5px}
+}
+
 /* ── panels ──────────────────────────────── */
 .panel{
   border:1px solid var(--line);border-radius:var(--r-lg);
@@ -603,7 +623,7 @@ a.btn{text-decoration:none}
         <div class="stage" id="stageRemote" hidden>
           <video id="camRemote" playsinline autoplay muted></video>
           <div class="msg" id="remoteMsg">Waiting for your partner's camera…</div>
-          <span class="camLabel">Partner</span>
+          <span class="camLabel" id="camLabelPartner">Partner</span>
         </div>
       </div>
       <div class="shots" id="shots"></div>
@@ -827,7 +847,9 @@ a.btn{text-decoration:none}
 
     <!-- choose -->
     <div id="duoChoice" style="margin-top:18px">
-      <button class="btn primary wide" id="duoHostBtn">Start a session</button>
+      <button class="btn primary wide" id="duoSoloBtn" hidden>Enter alone — no code, no partner</button>
+      <p class="hint" id="duoSoloHint" hidden>Developer only. Opens the Duo booth on your own, with your camera filling both halves.</p>
+      <button class="btn primary wide" id="duoHostBtn" style="margin-top:14px">Start a session</button>
       <p class="hint" id="duoHostHint">You get a code, a link and a QR code — share whichever is easiest.</p>
       <button class="btn ghost wide" id="duoJoinBtn" style="margin-top:14px">Join a session</button>
       <p class="hint">Paste the code or the link your partner sent you.</p>

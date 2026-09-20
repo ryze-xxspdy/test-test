@@ -243,7 +243,7 @@ function emptyDuo(){
     call: null, pendingCall: null, code: null, hostId: null,
     remoteStream: null, expiry: null, attempts: 0, lastCall: 0,
     openT: null, expiryT: null, watchT: null, discT: null,
-    relay: false, wake: null, chatTimes: []
+    relay: false, wake: null, chatTimes: [], solo: false
   };
 }
 
@@ -291,6 +291,7 @@ function go(n){
   $$(".step").forEach((el, i) => el.classList.toggle("on", i + 1 === n));
   $("#fill").style.width = (n / 4 * 100) + "%";
   $("#count").textContent = n + " of 4";
+  if(n === 2 || n === 3) scheduleProfile();
   if(n === 2){ applyDuoStep2UI(); startStep2Cam(); }
   if(n === 3) applyDuoStep3UI();
   if(n === 4){ drawPreview(); toast("Thank you for using RyzeBooth ✨", "good"); }
@@ -306,7 +307,9 @@ $("#soloCard").onclick = () => { teardownDuo(); releaseCam(); markCardSelected("
    logo (or on the locked card) open the admin sign-in; signing in
    switches developer mode on and unlocks Duo for this tab. This is a
    front-of-house gate for a feature still in development, not a
-   security boundary — the passcode itself is checked on the server.   */
+   security boundary — the passcode itself is checked on the server.
+   Only developers can enter Duo Booth with no code and no partner
+   (duoSolo below). Everyone else needs a partner's code or link.        */
 const DEV_KEY = "ryze_dev_v1";
 const LOCK_SVG  = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>';
 const ARROW_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h13M13 6l6 6-6 6"/></svg>';
@@ -323,6 +326,9 @@ function applyDuoGate(){
   /* only developers can start a room; joining is a separate choice (CONFIG.duoLinkJoinOpen) */
   $("#duoHostBtn").hidden = !S.dev;
   $("#duoHostHint").hidden = !S.dev;
+  /* only developers can walk in with no code and no partner */
+  $("#duoSoloBtn").hidden = !S.dev;
+  $("#duoSoloHint").hidden = !S.dev;
 }
 function setDev(on){
   S.dev = !!on;
@@ -331,6 +337,7 @@ function setDev(on){
   applyDuoGate();
 }
 $("#devPill").onclick = () => {
+  if(S.duo.solo){ teardownDuo(); if(S.step !== 1) go(1); }          // a no-partner session only exists for developers
   if(S.duo.active || $("#duoModal").classList.contains("on")){ toast("Finish or leave the Duo session first"); return; }
   setDev(false); markCardSelected("solo"); toast("Developer mode is off");
 };
@@ -386,8 +393,9 @@ function applyDuoStep3UI(){
   const active = S.duo.active;
   $("#stageRemote").hidden = !active;
   $("#camLabelYou").hidden = !active;
-  $("#chatPanel").hidden = !active;
-  $("#duoNetWrap").hidden = !active;
+  $("#chatPanel").hidden = !active || !!S.duo.solo;
+  $("#duoNetWrap").hidden = !active || !!S.duo.solo;
+  const pl = $("#camLabelPartner"); if(pl) pl.textContent = S.duo.solo ? "You · preview" : "Partner";
   renderChat();
 
   if(active){
@@ -409,6 +417,8 @@ function applyDuoStep3UI(){
 
   $("#camHint").textContent = !active
     ? "Your camera never leaves this device. Photos are only saved when you choose to save them."
+    : S.duo.solo
+    ? "Developer mode: no partner needed — your camera fills both halves of every shot."
     : (S.duo.role === "host"
         ? "Once you both have a camera on, you control the countdown for both of you."
         : "Once you both have a camera on, your host starts the countdown for both of you.");
@@ -484,13 +494,42 @@ function buildLayouts(host, showDelete = false, filterFn = null){
   });
 }
 
+/* Every look is shown as a little box with a profile picture wearing that look.
+   The picture is a snapshot of whoever is at the camera (kept in memory only,
+   dropped the moment the camera is released); with no camera it is a stand-in
+   portrait so the effect is still visible. */
+const DEFAULT_PROFILE = "data:image/svg+xml;utf8," + encodeURIComponent(
+  "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 120'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'>" +
+  "<stop offset='0' stop-color='#9fd3ff'/><stop offset='1' stop-color='#ffd1e3'/></linearGradient></defs>" +
+  "<rect width='120' height='120' fill='url(#g)'/><path d='M18 120c3-27 21-42 42-42s39 15 42 42z' fill='#e2557a'/>" +
+  "<circle cx='60' cy='50' r='23' fill='#f0c3a0'/><path d='M36 48c0-17 11-26 24-26s24 9 24 26c-6-8-14-13-24-13s-18 5-24 13z' fill='#3b2a30'/></svg>");
+let profilePic = null;
+function renderLooks(){
+  buildChips($("#looks2"), LOOKS, "look");
+  buildChips($("#looks3"), LOOKS, "look");
+}
+function refreshProfile(){
+  const v = ["#cam2", "#cam", "#duoModalCam"].map(s => $(s)).find(el => el && el.videoWidth > 0 && el.readyState >= 2);
+  if(!v) return;
+  try{
+    const src = grabFrom(v, S.mirror && S.facing === "user");
+    const c = document.createElement("canvas"); c.width = c.height = 120;
+    drawCover(c.getContext("2d"), src, 0, 0, 120, 120);
+    profilePic = c.toDataURL("image/jpeg", .7);
+    renderLooks();
+  }catch(e){}
+}
+function scheduleProfile(){ [900, 2600].forEach(ms => setTimeout(refreshProfile, ms)); }
+
 function buildChips(host, obj, key, after){
-  host.innerHTML = Object.entries(obj).map(([k, v]) =>
-    `<button class="chip ${S[key] === k ? "on" : ""}" data-k="${k}">${v.label}</button>`).join("");
+  const tiles = key === "look";
+  host.classList.toggle("looks", tiles);
+  host.innerHTML = Object.entries(obj).map(([k, v]) => tiles
+    ? `<button class="chip look ${S[key] === k ? "on" : ""}" data-k="${k}" aria-pressed="${S[key] === k}"><span class="pic"><img src="${profilePic || DEFAULT_PROFILE}" alt="" draggable="false" style="filter:${v.css}"></span><span class="nm">${v.label}</span></button>`
+    : `<button class="chip ${S[key] === k ? "on" : ""}" data-k="${k}">${v.label}</button>`).join("");
   host.querySelectorAll("[data-k]").forEach(b => b.onclick = () => {
     S[key] = b.dataset.k;
-    buildChips($("#looks2"), LOOKS, "look");
-    buildChips($("#looks3"), LOOKS, "look");
+    renderLooks();
     applyCamFilter(); renderShots(); if(after) after();
     if(key === "look" && S.duo.active && S.duo.role === "host") sendDuo({ type: "config", frame: S.frame, look: S.look, timer: S.timer });
   });
@@ -707,6 +746,7 @@ async function ensureStream(force = false){
       attachLocal();
       applyCamFilter(); applyMirror();
       if(S.duo.active) replaceOutgoingTrack();
+      if(S.duo.solo){ S.duo.remoteStream = s; attachRemote(s); applyMirror(); applyCamFilter(); }
       return s;
     }catch(err){
       if(!err || !err.cancelled){ console.error("[camera]", err); camError(err); }
@@ -767,6 +807,7 @@ function replaceOutgoingTrack(){
 function applyCamFilter(){
   const css = LOOKS[S.look].css;
   LOCAL_VIDEOS.forEach(sel => { const v = $(sel); if(v) v.style.filter = css; });
+  ["#camRemote", "#duoRemoteCam"].forEach(sel => { const v = $(sel); if(v) v.style.filter = S.duo.solo ? css : ""; });
 }
 
 function prepShots(){
@@ -784,6 +825,7 @@ async function startCam(){
     await ensureStream();
     attachLocal();
     applyCamFilter(); applyMirror();
+    scheduleProfile();
     if(S.duo.active) beginMedia();
     return true;
   }catch(err){
@@ -801,6 +843,7 @@ function stopCam(){
 }
 function releaseCam(){
   if(stream){ stream.getTracks().forEach(t => t.stop()); stream = null; }
+  if(profilePic){ profilePic = null; renderLooks(); }     // don't leave the last person's face on the next visitor's screen
   LOCAL_VIDEOS.forEach(sel => { const v = $(sel); if(v) v.srcObject = null; });
   const m = $("#camMsg"); if(m) m.style.display = "grid";
   const m2 = $("#cam2Msg"); if(m2){ m2.style.display = "grid"; m2.textContent = "Camera is off."; }
@@ -809,6 +852,7 @@ function releaseCam(){
 function applyMirror(){
   const on = S.mirror && S.facing === "user";
   LOCAL_VIDEOS.forEach(sel => { const v = $(sel); if(v) v.classList.toggle("mir", on); });
+  ["#camRemote", "#duoRemoteCam"].forEach(sel => { const v = $(sel); if(v) v.classList.toggle("mir", on && !!S.duo.solo); });
   $("#mirBtn").classList.toggle("on", S.mirror);
   $("#mirTog").classList.toggle("on", S.mirror);
   $("#mirTog").setAttribute("aria-checked", S.mirror);
@@ -856,7 +900,9 @@ async function runSequence(remote = false){
     for(let i = 0; i < n; i++){
       await countdown(S.timer);
       flash(); shutter();
-      const [left, right] = duoPair(grab(), grabFrom($("#camRemote"), false));
+      const [left, right] = S.duo.solo
+        ? [grab(), grab()]
+        : duoPair(grab(), grabFrom($("#camRemote"), false));
       S.shots[i] = combineDuo(left, right);
       renderShots();
       await wait(520);
@@ -1218,6 +1264,32 @@ $("#duoCancelBtn").onclick = () => { teardownDuo(); closeDuoModal(); };
 $("#duoModal").addEventListener("click", e => { if(e.target.id === "duoModal" && !S.duo.active){ teardownDuo(); closeDuoModal(); } });
 $("#duoBackBtn").onclick   = () => { teardownDuo(); showDuoView("choice"); };
 
+/* Developer-only: open the Duo booth on your own — no code, no partner.
+   Your one camera fills both halves of every shot, so you can test the
+   layouts, looks and the finished strip without a second device. */
+async function duoSolo(){
+  if(!S.dev){ toast(DUO_LOCKED_MSG); return; }
+  teardownDuo();
+  const seq = ++duoSeq;
+  S.duo.active = true; S.duo.role = "host"; S.duo.solo = true;
+  let s;
+  try{ s = await ensureStream(); }
+  catch(e){
+    if(seq === duoSeq){ S.duo = emptyDuo(); }
+    toast("Camera did not start", "bad");
+    return;
+  }
+  if(seq !== duoSeq) return;                 // they backed out while the permission prompt was open
+  S.duo.remoteStream = s;
+  attachRemote(s); applyMirror(); applyCamFilter();
+  closeDuoModal();
+  markCardSelected("duo");
+  S.shots = []; S.stickers = []; S.sel = null;
+  buildLayouts($("#layouts"), false, layoutFilter());
+  go(2);
+  toast("Developer mode — Duo Booth, just you", "good");
+}
+$("#duoSoloBtn").onclick   = () => duoSolo();
 $("#duoHostBtn").onclick   = () => duoHost();
 $("#duoNewCodeBtn").onclick = () => duoHost();
 $("#duoJoinBtn").onclick   = () => { showDuoView("join"); $("#duoCodeIn").focus(); };
@@ -1607,7 +1679,7 @@ function attachRemote(remote){
 
 function teardownRemoteVideo(){
   S.duo.remoteStream = null;
-  [$("#camRemote"), $("#duoRemoteCam")].forEach(v => { if(v) v.srcObject = null; });
+  [$("#camRemote"), $("#duoRemoteCam")].forEach(v => { if(v){ v.srcObject = null; v.classList.remove("mir"); v.style.filter = ""; } });
   const rm = $("#remoteMsg"); if(rm) rm.style.display = "grid";
   const dm = $("#duoRemoteMsg"); if(dm) dm.hidden = false;
 }
@@ -1711,7 +1783,7 @@ function renderChat(){
   const badge = $("#chatBadge");
   if(badge){ badge.textContent = S.unread || ""; badge.hidden = !S.unread; }
   const panel = $("#chatPanel");
-  if(panel) panel.hidden = !S.duo.active;
+  if(panel) panel.hidden = !S.duo.active || !!S.duo.solo;
 }
 $("#duoChatSend").onclick = () => sendChat("#duoChatIn");
 $("#chatSend").onclick    = () => sendChat("#chatIn");
@@ -1921,15 +1993,10 @@ $("#adminGo").onclick = async () => {
   $("#adminPass").value = "";
   S.adminPass = pass;                 // memory only — gone on reload
   setDev(true);
-  toast("Developer mode is on — jumping into Duo Booth", "good");
-  showAdminBody(true);
-  /* dev mode has one job most of the time: testing Duo. Don't make a developer
-     close this panel, scroll to the card and click it every single time —
-     go there directly. (Turning dev mode off, or the 5-tap logo shortcut when
-     you actually want the admin panel, both still work as before.) */
+  /* Signing in only switches developer mode on. It no longer drags you into
+     Duo Booth — tap the Duo card when you want it. */
   $("#adminModal").classList.remove("on");
-  markCardSelected("duo");
-  openDuoModal();
+  toast("Developer mode on", "good");
 };
 $("#adminPass").addEventListener("keydown", e => { if(e.key === "Enter") $("#adminGo").click(); });
 
